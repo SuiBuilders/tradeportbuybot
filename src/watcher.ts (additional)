@@ -1,0 +1,17 @@
+function findSuiSpend(changes: BalanceChange[], buyer: string): string | null {
+  for (const ch of changes) {
+    if (
+      ch.coinType === '0x2::sui::SUI' &&
+      ch.owner &&
+      typeof ch.owner === 'object' &&
+      'AddressOwner' in ch.owner &&
+      ch.owner.AddressOwner === buyer
+    ) {
+      const amt = BigInt(ch.amount);
+      if (amt < 0n) {
+        return (-amt).toString();
+      }
+    }
+  }
+  return null;
+}
