@@ -182,7 +182,10 @@ async function processTx(
       });
       balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
     } catch (err) {
-      console.error('Failed to refetch tx for balance changes', { digest: tx.digest, err });
+      console.error('Failed to refetch tx for balance changes; skipping tx', {
+        digest: tx.digest,
+        err,
+      });
       return;
     }
   }

@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import TelegramBot from 'node-telegram-bot-api';
 import { initDb } from './db';
+import { getAllConfigs } from './configStore';
 import { startTelegramBot } from './telegramBot';
 import { startWatcher } from './watcher';
 
@@ -25,6 +26,11 @@ initDb(DB_PATH);
 async function start() {
   const bot: TelegramBot = startTelegramBot(TELEGRAM_BOT_TOKEN as string);
   const getPrice = await createPriceProvider(SUI_USD_PRICE, SUI_PRICE_TTL_MS);
+  const cfgs = getAllConfigs();
+  console.log(`Loaded ${cfgs.length} chat config(s).`);
+  if (cfgs.length > 0) {
+    console.log('Chat IDs:', cfgs.map((c) => c.chatId).join(', '));
+  }
   startWatcher(bot, SUI_RPC_URL, POLL_INTERVAL_MS, getPrice);
   console.log('TradePort buy bot started.');
 }
