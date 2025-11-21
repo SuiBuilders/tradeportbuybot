@@ -238,17 +238,29 @@ async function processTx(
         cfg,
         tx.digest,
         change,
-        tx.balanceChanges as BalanceChange[],
+        balanceChanges as BalanceChange[],
         getSuiUsdPrice,
       );
     }
   }
 
   if (!matched) {
-    console.log('Processed tx with no matching configs', {
-      digest: tx.digest,
-      balanceChanges: balanceChanges.length,
-    });
+    console.log(
+      'Processed tx with no matching configs',
+      JSON.stringify(
+        {
+          digest: tx.digest,
+          balanceChanges: balanceChanges.length,
+          changes: balanceChanges.map((bc) => ({
+            coinType: bc.coinType,
+            amount: bc.amount,
+            owner: bc.owner,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
   }
 }
 
