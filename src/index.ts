@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import TelegramBot from 'node-telegram-bot-api';
+import Database from 'better-sqlite3';
 import { initDb } from './db';
 import { getAllConfigs } from './configStore';
 import { startTelegramBot } from './telegramBot';
@@ -16,6 +17,9 @@ const SUI_USD_PRICE =
     ? Number.parseFloat(process.env.SUI_USD_PRICE)
     : null;
 const SUI_PRICE_TTL_MS = Number(process.env.SUI_PRICE_TTL_MS || '300000'); // 5 minutes
+const CLEAR_CURSOR_ON_BOOT =
+  (process.env.CLEAR_CURSOR_ON_BOOT || '').toLowerCase() === 'true' ||
+  process.env.CLEAR_CURSOR_ON_BOOT === '1';
 
 if (!TELEGRAM_BOT_TOKEN) {
   throw new Error('Missing TELEGRAM_BOT_TOKEN in .env');
@@ -24,6 +28,18 @@ if (!TELEGRAM_BOT_TOKEN) {
 initDb(DB_PATH);
 
 async function start() {
+  console.log(`DB_PATH=${DB_PATH}`);
+  if (CLEAR_CURSOR_ON_BOOT) {
+    try {
+      const db = new Database(DB_PATH);
+      db.prepare('DELETE FROM meta WHERE key = ?').run('last_seen_digest');
+      db.close();
+      console.log('Cleared last_seen_digest on boot.');
+    } catch (err) {
+      console.error('Failed to clear last_seen_digest on boot', err);
+    }
+  }
+
   const bot: TelegramBot = startTelegramBot(TELEGRAM_BOT_TOKEN as string);
   const getPrice = await createPriceProvider(SUI_USD_PRICE, SUI_PRICE_TTL_MS);
   const cfgs = getAllConfigs();
