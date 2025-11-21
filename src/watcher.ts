@@ -99,6 +99,12 @@ async function pollOnce(
   const newestDigest = data[0]?.digest;
   const lastSeenDigest = getLastSeen();
 
+  console.log('Poll batch', {
+    newest: newestDigest,
+    lastSeen: lastSeenDigest,
+    count: data.length,
+  });
+
   const configs = getAllConfigs();
   const configsByToken = new Map<string, ChatConfig[]>();
   for (const cfg of configs) {
@@ -109,7 +115,10 @@ async function pollOnce(
   }
 
   for (const tx of data) {
-    if (lastSeenDigest && tx.digest === lastSeenDigest) break;
+    if (lastSeenDigest && tx.digest === lastSeenDigest) {
+      console.log('Reached last_seen_digest, stopping batch', { digest: tx.digest });
+      break;
+    }
     await processTx(bot, client, tx, configsByToken, getSuiUsdPrice);
   }
 
@@ -202,7 +211,16 @@ async function processTx(
     if (amount <= 0n) continue;
 
     for (const cfg of configs) {
-      if (amount < BigInt(cfg.minAlertAmountRaw)) continue;
+      if (amount < BigInt(cfg.minAlertAmountRaw)) {
+        console.log('Skip below min alert', {
+          digest: tx.digest,
+          token: change.coinType,
+          amount: change.amount,
+          min: cfg.minAlertAmountRaw,
+          chatId: cfg.chatId,
+        });
+        continue;
+      }
       console.log('Buy detected', {
         digest: tx.digest,
         token: change.coinType,
