@@ -17,6 +17,7 @@ const SUI_USD_PRICE =
     ? Number.parseFloat(process.env.SUI_USD_PRICE)
     : null;
 const SUI_PRICE_TTL_MS = Number(process.env.SUI_PRICE_TTL_MS || '300000'); // 5 minutes
+const BACKUP_SUI_RPC_URL = process.env.BACKUP_SUI_RPC_URL || 'https://fullnode.mainnet.sui.io:443';
 const CLEAR_CURSOR_ON_BOOT =
   (process.env.CLEAR_CURSOR_ON_BOOT || '').toLowerCase() === 'true' ||
   process.env.CLEAR_CURSOR_ON_BOOT === '1';
@@ -47,7 +48,7 @@ async function start() {
   if (cfgs.length > 0) {
     console.log('Chat IDs:', cfgs.map((c) => c.chatId).join(', '));
   }
-  startWatcher(bot, SUI_RPC_URL, POLL_INTERVAL_MS, getPrice);
+  startWatcher(bot, SUI_RPC_URL, POLL_INTERVAL_MS, getPrice, BACKUP_SUI_RPC_URL);
   console.log('TradePort buy bot started.');
 }
 

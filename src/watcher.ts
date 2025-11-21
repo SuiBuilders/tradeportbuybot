@@ -34,8 +34,10 @@ export function startWatcher(
   rpcUrl: string,
   pollIntervalMs: number,
   getSuiUsdPrice: () => number | null,
+  backupRpcUrl?: string | null,
 ) {
   const client = new SuiClient({ url: rpcUrl });
+  const backupClient = backupRpcUrl ? new SuiClient({ url: backupRpcUrl }) : null;
   let lastSeenDigest = getMeta('last_seen_digest');
   let isPolling = false;
   let effectErrorLogged = false;
@@ -72,6 +74,7 @@ export function startWatcher(
           setMeta('last_seen_digest', digest);
         },
         getSuiUsdPrice,
+        backupClient,
       );
     } catch (err) {
       console.error('Watcher poll failed', err);
@@ -90,6 +93,7 @@ async function pollOnce(
   getLastSeen: () => string | null,
   saveLastSeen: (digest: string) => void,
   getSuiUsdPrice: () => number | null,
+  backupClient?: SuiClient | null,
 ) {
   const resp = await queryTxBlocks(client, 100);
 
@@ -119,7 +123,7 @@ async function pollOnce(
       console.log('Reached last_seen_digest, stopping batch', { digest: tx.digest });
       break;
     }
-    await processTx(bot, client, tx, configsByToken, getSuiUsdPrice);
+    await processTx(bot, client, backupClient, tx, configsByToken, getSuiUsdPrice);
   }
 
   if (newestDigest) {
@@ -170,6 +174,7 @@ function findSuiSpend(changes: BalanceChange[], buyer: string): string | null {
 async function processTx(
   bot: TelegramBot,
   client: SuiClient,
+  backupClient: SuiClient | null | undefined,
   tx: SuiTransactionBlockResponse,
   configsByToken: Map<string, ChatConfig[]>,
   getSuiUsdPrice: () => number | null,
@@ -201,10 +206,60 @@ async function processTx(
 
   if (!balanceChanges || balanceChanges.length === 0) {
     console.log('No balance changes found, skipping tx', { digest: tx.digest });
-    return;
+    if (backupClient) {
+      try {
+        const full = await backupClient.getTransactionBlock({
+          digest: tx.digest,
+          options: {
+            showBalanceChanges: true,
+            showEffects: true,
+            showInput: false,
+            showEvents: false,
+            showRawInput: false,
+          },
+        });
+        balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
+      } catch (err) {
+        console.error('Backup refetch failed; skipping tx', { digest: tx.digest, err });
+        return;
+      }
+      if (!balanceChanges || balanceChanges.length === 0) {
+        console.log('Backup also missing balance changes, skipping', { digest: tx.digest });
+        return;
+      }
+    } else {
+      return;
+    }
   }
 
   let matched = false;
+  let hadTokenMatch = balanceChanges.some((bc) => configsByToken.has(bc.coinType));
+
+  // If no tracked token in primary changes, try backup once.
+  if (!hadTokenMatch && backupClient) {
+    try {
+      const full = await backupClient.getTransactionBlock({
+        digest: tx.digest,
+        options: {
+          showBalanceChanges: true,
+          showEffects: true,
+          showInput: false,
+          showEvents: false,
+          showRawInput: false,
+        },
+      });
+      const bc2 = (full.balanceChanges as BalanceChange[]) || [];
+      if (bc2.length > 0) {
+        balanceChanges = bc2;
+        hadTokenMatch = bc2.some((bc) => configsByToken.has(bc.coinType));
+      }
+    } catch (err) {
+      console.error('Backup refetch failed while searching for token match', {
+        digest: tx.digest,
+        err,
+      });
+    }
+  }
 
   for (const change of balanceChanges) {
     const configs = configsByToken.get(change.coinType);
