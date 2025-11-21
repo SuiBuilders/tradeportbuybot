@@ -199,7 +199,12 @@ async function processTx(
     }
   }
 
-  if (!balanceChanges || balanceChanges.length === 0) return;
+  if (!balanceChanges || balanceChanges.length === 0) {
+    console.log('No balance changes found, skipping tx', { digest: tx.digest });
+    return;
+  }
+
+  let matched = false;
 
   for (const change of balanceChanges) {
     const configs = configsByToken.get(change.coinType);
@@ -221,6 +226,7 @@ async function processTx(
         });
         continue;
       }
+      matched = true;
       console.log('Buy detected', {
         digest: tx.digest,
         token: change.coinType,
@@ -236,6 +242,13 @@ async function processTx(
         getSuiUsdPrice,
       );
     }
+  }
+
+  if (!matched) {
+    console.log('Processed tx with no matching configs', {
+      digest: tx.digest,
+      balanceChanges: balanceChanges.length,
+    });
   }
 }
 
