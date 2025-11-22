@@ -187,12 +187,30 @@ async function processTx(
   configsByToken: Map<string, ChatConfig[]>,
   getSuiUsdPrice: () => number | null,
 ) {
-  let balanceChanges = tx.balanceChanges as BalanceChange[] | undefined;
+  // Always refetch full tx to avoid partial balanceChanges from paged queries.
+  let balanceChanges: BalanceChange[] | undefined;
+  try {
+    const full = await client.getTransactionBlock({
+      digest: tx.digest,
+      options: {
+        showBalanceChanges: true,
+        showEffects: true,
+        showInput: false,
+        showEvents: false,
+        showRawInput: false,
+      },
+    });
+    balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
+  } catch (err) {
+    console.error('Failed to refetch tx for balance changes; skipping tx', {
+      digest: tx.digest,
+      err,
+    });
+  }
 
-  // If missing balance changes (e.g., fallback query or RPC omitted), refetch the tx detail.
-  if (!balanceChanges || balanceChanges.length === 0) {
+  if ((!balanceChanges || balanceChanges.length === 0) && backupClient) {
     try {
-      const full = await client.getTransactionBlock({
+      const full = await backupClient.getTransactionBlock({
         digest: tx.digest,
         options: {
           showBalanceChanges: true,
@@ -204,40 +222,13 @@ async function processTx(
       });
       balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
     } catch (err) {
-      console.error('Failed to refetch tx for balance changes; skipping tx', {
-        digest: tx.digest,
-        err,
-      });
-      return;
+      console.error('Backup refetch failed; skipping tx', { digest: tx.digest, err });
     }
   }
 
   if (!balanceChanges || balanceChanges.length === 0) {
     console.log('No balance changes found, skipping tx', { digest: tx.digest });
-    if (backupClient) {
-      try {
-        const full = await backupClient.getTransactionBlock({
-          digest: tx.digest,
-          options: {
-            showBalanceChanges: true,
-            showEffects: true,
-            showInput: false,
-            showEvents: false,
-            showRawInput: false,
-          },
-        });
-        balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
-      } catch (err) {
-        console.error('Backup refetch failed; skipping tx', { digest: tx.digest, err });
-        return;
-      }
-      if (!balanceChanges || balanceChanges.length === 0) {
-        console.log('Backup also missing balance changes, skipping', { digest: tx.digest });
-        return;
-      }
-    } else {
-      return;
-    }
+    return;
   }
 
   let matched = false;
