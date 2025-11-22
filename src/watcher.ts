@@ -32,8 +32,8 @@ const FALLBACK_QUERY_OPTIONS = {
 const PAGE_LIMIT = 50;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 300;
-const LOOKBACK_LIMIT = 200;
-const DEDUPE_MAX = 2000;
+const LOOKBACK_LIMIT = 1000;
+const DEDUPE_MAX = 5000;
 
 export function startWatcher(
   bot: TelegramBot,
