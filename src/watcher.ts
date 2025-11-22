@@ -122,9 +122,21 @@ async function pollOnce(
 
     for (const tx of data) {
       try {
-        await processTx(bot, client, backupClient, tx, configsByToken, getSuiUsdPrice);
-        cursor = tx.digest;
-        saveLastSeen(cursor);
+        const processed = await processTx(
+          bot,
+          client,
+          backupClient,
+          tx,
+          configsByToken,
+          getSuiUsdPrice,
+        );
+        if (processed) {
+          cursor = tx.digest;
+          saveLastSeen(cursor);
+        } else {
+          console.warn('Did not process tx; will retry next poll', { digest: tx.digest });
+          return;
+        }
       } catch (err) {
         console.error('Failed to process tx; will retry next poll', { digest: tx.digest, err });
         return;
@@ -233,7 +245,7 @@ async function processTx(
   tx: SuiTransactionBlockResponse,
   configsByToken: Map<string, ChatConfig[]>,
   getSuiUsdPrice: () => number | null,
-) {
+): Promise<boolean> {
   // Prefer in-page balanceChanges; refetch only if needed.
   let balanceChanges = (tx.balanceChanges as BalanceChange[]) || [];
   let hasTrackedToken = balanceChanges.some((bc) => configsByToken.has(bc.coinType));
@@ -252,7 +264,7 @@ async function processTx(
 
   if (!balanceChanges || balanceChanges.length === 0) {
     console.log('No balance changes found, skipping tx', { digest: tx.digest });
-    return;
+    return false;
   }
 
   let matched = false;
@@ -340,6 +352,8 @@ async function processTx(
       ),
     );
   }
+
+  return true;
 }
 
 async function sendBuyAlert(
