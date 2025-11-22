@@ -179,39 +179,20 @@ function findSuiSpend(changes: BalanceChange[], buyer: string): string | null {
   return null;
 }
 
-async function processTx(
-  bot: TelegramBot,
-  client: SuiClient,
-  backupClient: SuiClient | null | undefined,
-  tx: SuiTransactionBlockResponse,
-  configsByToken: Map<string, ChatConfig[]>,
-  getSuiUsdPrice: () => number | null,
-) {
-  // Always refetch full tx to avoid partial balanceChanges from paged queries.
-  let balanceChanges: BalanceChange[] | undefined;
-  try {
-    const full = await client.getTransactionBlock({
-      digest: tx.digest,
-      options: {
-        showBalanceChanges: true,
-        showEffects: true,
-        showInput: false,
-        showEvents: false,
-        showRawInput: false,
-      },
-    });
-    balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
-  } catch (err) {
-    console.error('Failed to refetch tx for balance changes; skipping tx', {
-      digest: tx.digest,
-      err,
-    });
-  }
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if ((!balanceChanges || balanceChanges.length === 0) && backupClient) {
+async function fetchTxWithRetries(
+  client: SuiClient,
+  digest: string,
+  maxRetries = 3,
+  delayMs = 300,
+): Promise<SuiTransactionBlockResponse | null> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const full = await backupClient.getTransactionBlock({
-        digest: tx.digest,
+      return await client.getTransactionBlock({
+        digest,
         options: {
           showBalanceChanges: true,
           showEffects: true,
@@ -220,10 +201,41 @@ async function processTx(
           showRawInput: false,
         },
       });
-      balanceChanges = (full.balanceChanges as BalanceChange[]) || [];
-    } catch (err) {
-      console.error('Backup refetch failed; skipping tx', { digest: tx.digest, err });
+    } catch (err: any) {
+      const status = err?.status ?? err?.code;
+      if (status === 429 && attempt < maxRetries - 1) {
+        await sleep(delayMs * (attempt + 1));
+        continue;
+      }
+      console.error('Failed to fetch tx details', { digest, err });
+      return null;
     }
+  }
+  return null;
+}
+
+async function processTx(
+  bot: TelegramBot,
+  client: SuiClient,
+  backupClient: SuiClient | null | undefined,
+  tx: SuiTransactionBlockResponse,
+  configsByToken: Map<string, ChatConfig[]>,
+  getSuiUsdPrice: () => number | null,
+) {
+  // Prefer in-page balanceChanges; refetch only if needed.
+  let balanceChanges = (tx.balanceChanges as BalanceChange[]) || [];
+  let hasTrackedToken = balanceChanges.some((bc) => configsByToken.has(bc.coinType));
+
+  if (!hasTrackedToken || balanceChanges.length === 0) {
+    const full = await fetchTxWithRetries(client, tx.digest);
+    balanceChanges = (full?.balanceChanges as BalanceChange[]) || [];
+    hasTrackedToken = balanceChanges.some((bc) => configsByToken.has(bc.coinType));
+  }
+
+  if ((!hasTrackedToken || balanceChanges.length === 0) && backupClient) {
+    const fullBackup = await fetchTxWithRetries(backupClient, tx.digest);
+    balanceChanges = (fullBackup?.balanceChanges as BalanceChange[]) || [];
+    hasTrackedToken = balanceChanges.some((bc) => configsByToken.has(bc.coinType));
   }
 
   if (!balanceChanges || balanceChanges.length === 0) {
