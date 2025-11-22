@@ -130,13 +130,8 @@ async function pollOnce(
           configsByToken,
           getSuiUsdPrice,
         );
-        if (processed) {
-          cursor = tx.digest;
-          saveLastSeen(cursor);
-        } else {
-          console.warn('Did not process tx; will retry next poll', { digest: tx.digest });
-          return;
-        }
+        cursor = tx.digest;
+        saveLastSeen(cursor);
       } catch (err) {
         console.error('Failed to process tx; will retry next poll', { digest: tx.digest, err });
         return;
@@ -264,7 +259,7 @@ async function processTx(
 
   if (!balanceChanges || balanceChanges.length === 0) {
     console.log('No balance changes found, skipping tx', { digest: tx.digest });
-    return false;
+    return true; // advance cursor even if missing to avoid stalling
   }
 
   let matched = false;
