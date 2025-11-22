@@ -45,16 +45,16 @@ export function startWatcher(
   const seedLastSeen = async () => {
     if (lastSeenDigest) return;
     try {
-      const resp = await queryTxBlocks(client, 50, () => {
-        if (!effectErrorLogged) {
-          console.warn('Falling back to effects-only seed due to missing balance changes.');
-          effectErrorLogged = true;
-        }
+      const resp = await client.queryTransactionBlocks({
+        limit: 1,
+        order: 'descending',
+        options: QUERY_OPTIONS,
       });
       const newest = resp.data?.[0];
       if (newest?.digest) {
         lastSeenDigest = newest.digest;
         setMeta('last_seen_digest', newest.digest);
+        console.log('Seeded last_seen_digest to latest tip', newest.digest);
       }
     } catch (err) {
       console.error('Failed to seed last seen digest', err);
@@ -95,20 +95,7 @@ async function pollOnce(
   getSuiUsdPrice: () => number | null,
   backupClient?: SuiClient | null,
 ) {
-  const resp = await queryTxBlocks(client, 100);
-
-  const data = resp.data ?? [];
-  if (data.length === 0) return;
-
-  const newestDigest = data[0]?.digest;
-  const lastSeenDigest = getLastSeen();
-
-  console.log('Poll batch', {
-    newest: newestDigest,
-    lastSeen: lastSeenDigest,
-    count: data.length,
-  });
-
+  let cursor = getLastSeen();
   const configs = getAllConfigs();
   const configsByToken = new Map<string, ChatConfig[]>();
   for (const cfg of configs) {
@@ -118,24 +105,44 @@ async function pollOnce(
     configsByToken.get(cfg.tokenType)!.push(cfg);
   }
 
-  for (const tx of data) {
-    if (lastSeenDigest && tx.digest === lastSeenDigest) {
-      console.log('Reached last_seen_digest, stopping batch', { digest: tx.digest });
-      break;
-    }
-    await processTx(bot, client, backupClient, tx, configsByToken, getSuiUsdPrice);
-  }
+  while (true) {
+    const resp = await queryTxBlocks(client, 100, cursor, 'ascending');
+    const data = resp.data ?? [];
+    if (data.length === 0) break;
 
-  if (newestDigest) {
-    saveLastSeen(newestDigest);
+    console.log('Poll batch', {
+      newest: data[0]?.digest,
+      lastSeen: cursor,
+      count: data.length,
+    });
+
+    for (const tx of data) {
+      try {
+        await processTx(bot, client, backupClient, tx, configsByToken, getSuiUsdPrice);
+        cursor = tx.digest;
+        saveLastSeen(cursor);
+      } catch (err) {
+        console.error('Failed to process tx; will retry next poll', { digest: tx.digest, err });
+        return;
+      }
+    }
+
+    if (!resp.hasNextPage) break;
   }
 }
 
-async function queryTxBlocks(client: SuiClient, limit: number, onFallback?: () => void) {
+async function queryTxBlocks(
+  client: SuiClient,
+  limit: number,
+  cursor?: string | null,
+  order: 'ascending' | 'descending' = 'descending',
+  onFallback?: () => void,
+) {
   try {
     return await client.queryTransactionBlocks({
       limit,
-      order: 'descending',
+      order,
+      cursor: cursor ?? undefined,
       options: QUERY_OPTIONS,
     });
   } catch (err: any) {
@@ -145,7 +152,8 @@ async function queryTxBlocks(client: SuiClient, limit: number, onFallback?: () =
       console.warn('Primary query failed (effect is empty). Retrying without balance changes.');
       return await client.queryTransactionBlocks({
         limit,
-        order: 'descending',
+        order,
+        cursor: cursor ?? undefined,
         options: FALLBACK_QUERY_OPTIONS,
       });
     }
