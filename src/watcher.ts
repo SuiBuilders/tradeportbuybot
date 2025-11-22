@@ -29,6 +29,10 @@ const FALLBACK_QUERY_OPTIONS = {
   showEffects: true,
 } as const;
 
+const PAGE_LIMIT = 50;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 300;
+
 export function startWatcher(
   bot: TelegramBot,
   rpcUrl: string,
@@ -106,7 +110,7 @@ async function pollOnce(
   }
 
   while (true) {
-    const resp = await queryTxBlocks(client, 100, cursor, 'ascending');
+    const resp = await queryTxBlocks(client, PAGE_LIMIT, cursor, 'ascending');
     const data = resp.data ?? [];
     if (data.length === 0) break;
 
@@ -138,27 +142,35 @@ async function queryTxBlocks(
   order: 'ascending' | 'descending' = 'descending',
   onFallback?: () => void,
 ) {
-  try {
-    return await client.queryTransactionBlocks({
-      limit,
-      order,
-      cursor: cursor ?? undefined,
-      options: QUERY_OPTIONS,
-    });
-  } catch (err: any) {
-    const message = err?.message || '';
-    if (message.includes('effect is empty')) {
-      if (onFallback) onFallback();
-      console.warn('Primary query failed (effect is empty). Retrying without balance changes.');
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
       return await client.queryTransactionBlocks({
         limit,
         order,
         cursor: cursor ?? undefined,
-        options: FALLBACK_QUERY_OPTIONS,
+        options: QUERY_OPTIONS,
       });
+    } catch (err: any) {
+      const message = err?.message || '';
+      const status = err?.status ?? err?.code;
+      if (message.includes('effect is empty')) {
+        if (onFallback) onFallback();
+        console.warn('Primary query failed (effect is empty). Retrying without balance changes.');
+        return await client.queryTransactionBlocks({
+          limit,
+          order,
+          cursor: cursor ?? undefined,
+          options: FALLBACK_QUERY_OPTIONS,
+        });
+      }
+      if (status === 429 && attempt < MAX_RETRIES - 1) {
+        await sleep(RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
+  throw new Error('Failed to queryTransactionBlocks after retries');
 }
 
 function findSuiSpend(changes: BalanceChange[], buyer: string): string | null {
