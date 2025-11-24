@@ -32,9 +32,6 @@ const FALLBACK_QUERY_OPTIONS = {
 const PAGE_LIMIT = 50;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 300;
-const LOOKBACK_LIMIT = 1000;
-const DEDUPE_MAX = 5000;
-
 export function startWatcher(
   bot: TelegramBot,
   rpcUrl: string,
@@ -47,18 +44,6 @@ export function startWatcher(
   let lastSeenDigest = getMeta('last_seen_digest');
   let isPolling = false;
   let effectErrorLogged = false;
-  const processedDigests = new Set<string>();
-  const processedQueue: string[] = [];
-
-  const addProcessed = (digest: string) => {
-    if (processedDigests.has(digest)) return;
-    processedDigests.add(digest);
-    processedQueue.push(digest);
-    if (processedQueue.length > DEDUPE_MAX) {
-      const old = processedQueue.shift();
-      if (old) processedDigests.delete(old);
-    }
-  };
 
   const seedLastSeen = async () => {
     if (lastSeenDigest) return;
@@ -93,8 +78,6 @@ export function startWatcher(
         },
         getSuiUsdPrice,
         backupClient,
-        processedDigests,
-        addProcessed,
       );
     } catch (err) {
       console.error('Watcher poll failed', err);
@@ -114,8 +97,6 @@ async function pollOnce(
   saveLastSeen: (digest: string) => void,
   getSuiUsdPrice: () => number | null,
   backupClient?: SuiClient | null,
-  processedDigests?: Set<string>,
-  addProcessed?: (d: string) => void,
 ) {
   let cursor = getLastSeen();
   const configs = getAllConfigs();
@@ -125,21 +106,6 @@ async function pollOnce(
       configsByToken.set(cfg.tokenType, []);
     }
     configsByToken.get(cfg.tokenType)!.push(cfg);
-  }
-
-  // Optional lookback scan without moving cursor; dedupe via processedDigests.
-  if (LOOKBACK_LIMIT > 0) {
-    try {
-      const lb = await queryTxBlocks(client, LOOKBACK_LIMIT, null, 'descending');
-      const data = (lb.data ?? []).reverse(); // oldest first
-      for (const tx of data) {
-        if (processedDigests?.has(tx.digest)) continue;
-        await processTx(bot, client, backupClient, tx, configsByToken, getSuiUsdPrice);
-        if (addProcessed) addProcessed(tx.digest);
-      }
-    } catch (err) {
-      console.error('Lookback scan failed', err);
-    }
   }
 
   while (true) {
@@ -165,7 +131,6 @@ async function pollOnce(
         );
         cursor = tx.digest;
         saveLastSeen(cursor);
-        if (addProcessed) addProcessed(tx.digest);
       } catch (err) {
         console.error('Failed to process tx; will retry next poll', { digest: tx.digest, err });
         return;
